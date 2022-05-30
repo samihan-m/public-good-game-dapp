@@ -1,7 +1,7 @@
 import Head from 'next/head'
 import { useState, useEffect } from 'react'
 import Web3 from 'web3'
-import gameContract from '../../public-good-game/blockchain/game'
+import gameContract from '../blockchain/game'
 import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
 
