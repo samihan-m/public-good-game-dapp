@@ -168,6 +168,8 @@ const Game = () => {
   const initializePlayerHandler = async() => {
     // Disable initialize button so users do not do it multiple times
     setInitializeButtonEnabled(false)
+
+    setSuccessMsg("Initializing player, please wait...")
     
     try {
       // Call initializePlayer contract function
@@ -233,14 +235,12 @@ const Game = () => {
         currentRound = result
         // Call addTokens function
         await contract.methods.addTokens(tokensToPut).send({from: address}, async function(error, result) {
-
+          
           // Update display
           setTokenTotal(parseInt(tokenTotal) - parseInt(tokensToPut))
           setInPotTokenTotal(parseInt(inPotTokenTotal) + parseInt(tokensToPut))
           setTokensToPut(0)
           document.getElementById("tokensToGive").value = 0
-
-          console.log("Before disabling submit button")
 
           // Wait until round passes, then update display with new information
           let newRound = currentRound
@@ -254,6 +254,7 @@ const Game = () => {
               newRound = result
             })
           }
+          
           // Get new information for display
           await contract.methods.getMyInfo().call({from: address}, function(error, result) {
             console.log(error)
@@ -276,6 +277,7 @@ const Game = () => {
     // Ask for password
     const givenPassword = prompt("Enter play round password:")
     if(givenPassword == "go!") {
+      setSuccessMsg("Playing the round! Calculating new totals...")
       // Call play round
       await contract.methods.playRound().send({from: address}, async function(error, result) {
         console.log(error)
@@ -285,8 +287,6 @@ const Game = () => {
           console.log(error)
           console.log(result)
         })
-
-        setSuccessMsg("Played the round! Everybody's totals should have been updated.")
       })
     }
     else {
