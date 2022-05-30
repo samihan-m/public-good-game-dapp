@@ -235,12 +235,15 @@ const Game = () => {
         currentRound = result
         // Call addTokens function
         await contract.methods.addTokens(tokensToPut).send({from: address}, async function(error, result) {
-          
+          console.log(error)
+          console.log(result)
+
           // Update display
           setTokenTotal(parseInt(tokenTotal) - parseInt(tokensToPut))
           setInPotTokenTotal(parseInt(inPotTokenTotal) + parseInt(tokensToPut))
           setTokensToPut(0)
           document.getElementById("tokensToGive").value = 0
+          setSuccessMsg("You played your turn this round! Please wait for everybody to take their turn.")
 
           // Wait until round passes, then update display with new information
           let newRound = currentRound
