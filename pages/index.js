@@ -5,6 +5,20 @@ import gameContract from '../blockchain/game'
 import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
 
+/*
+TODO:
+Things to do:
+
+1. Ensure that playing a round updates clients waiting for new rounds 
+^ this seems to be good
+2. Make 'You currently have X tokens in pot' update after the submitTokens transaction FINISHES
+^ this seems to be good
+3. Make buttons have loading icons when stuff is loading
+- Submit
+- Initialize
+
+
+*/
 const Game = () => {
 
   const switchToReplitTestnet = async () => {
@@ -41,19 +55,21 @@ const Game = () => {
   const [isInitializeButtonDisabled, setIsInitalizeButtonDisabled] = useState(true)
   const [isInputFormDisabled, setIsInputFormDisabled] = useState(true)
   const [isSubmitButtonDisabled, setIsSubmitButtonDisabled] = useState(true)
+  const [isSubmitButtonLoading, setIsSubmitButtonLoading] = useState(false)
+  const [isInitializeButtonLoading, setIsInitializeButtonLoading] = useState(false)
 
   useEffect(() => {
     if(contract && address) getInfoHandler()
   }, [contract, address])
 
   const setConnectButtonEnabled = async (status) => {
-    const initializeButton = document.getElementById("connectWalletButton")
+    const connectButton = document.getElementById("connectWalletButton")
     if(status == true) {
-      initializeButton.innerText = "Connect Wallet"
+      connectButton.innerText = "Connect Wallet"
       setIsConnectButtonDisabled(false)
     }
     else {
-      initializeButton.innerText = "Connected"
+      connectButton.innerText = "Connected"
       setIsConnectButtonDisabled(true)
     }
   }
@@ -93,6 +109,44 @@ const Game = () => {
     }
   }
 
+  const waitForNewRound = async() => {
+    try {
+      // Get current round number from chain so we know when the round has passed
+      let currentRound
+      await contract.methods.getRoundNumber().call({from: address}, async function(error, result) {
+        console.log(error)
+        console.log("Current round number: " + result)
+        currentRound = result
+        let newRound = currentRound
+          while(newRound == currentRound) {
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+            console.log("Waiting for new round...")
+            await sleep(2000)
+            await contract.methods.getRoundNumber().call({from: address}, async function(error, result) {
+              console.log(error)
+              console.log(result)
+              newRound = result
+            })
+          }
+          
+          // Get new information for display
+          await contract.methods.getMyInfo().call({from: address}, function(error, result) {
+            console.log(error)
+            console.log(result)
+            // Update display
+            setTokenTotal(result[1])
+            setInPotTokenTotal(0)
+            setInputFormEnabled(true)
+            setSubmitButtonEnabled(true)
+            setIsSubmitButtonLoading(false)
+            setSuccessMsg("A new round has started! Find your new token total above.")
+          })
+        })
+    } catch(err) {
+      setError(err)
+    }
+  }
+
   const getInfoHandler = async () => {
     // Get information from blockchain
     await contract.methods.getMyInfo().call({from: address}, function(error, result){
@@ -122,6 +176,7 @@ const Game = () => {
         if(parseInt(inPotTokenTotal) > 0) {
           setIsSubmitButtonDisabled(true)
           setSuccessMsg("You already submitted your turn this round. Wait for the next round!")
+          waitForNewRound()
         }
       }
     })
@@ -160,7 +215,7 @@ const Game = () => {
       setConnectButtonEnabled(false)
     } catch(err) {
       console.log(err.message)
-      setError(err.message)
+      setError(err.message + "\nTry installing Metamask")
     } 
     
   }
@@ -168,7 +223,8 @@ const Game = () => {
   const initializePlayerHandler = async() => {
     // Disable initialize button so users do not do it multiple times
     setInitializeButtonEnabled(false)
-
+    setIsInitializeButtonLoading(true)
+    
     setSuccessMsg("Initializing player, please wait...")
     
     try {
@@ -194,6 +250,8 @@ const Game = () => {
       
             setSuccessMsg("Player information loaded successfully. You may now play!")
             setError("")
+
+            setIsInitializeButtonLoading(false)
 
             // Enable game form
             setInputFormEnabled(true)
@@ -235,37 +293,28 @@ const Game = () => {
         currentRound = result
         // Call addTokens function
         await contract.methods.addTokens(tokensToPut).send({from: address}, async function(error, result) {
-          
-          // Update display
-          setTokenTotal(parseInt(tokenTotal) - parseInt(tokensToPut))
-          setInPotTokenTotal(parseInt(inPotTokenTotal) + parseInt(tokensToPut))
-          setTokensToPut(0)
-          document.getElementById("tokensToGive").value = 0
-
-          // Wait until round passes, then update display with new information
-          let newRound = currentRound
-          while(newRound == currentRound) {
-            const sleep = ms => new Promise(r => setTimeout(r, ms));
-            console.log("Waiting for new round...")
-            await sleep(2000)
-            await contract.methods.getRoundNumber().call({from: address}, async function(error, result) {
-              console.log(error)
-              console.log(result)
-              newRound = result
+          setSuccessMsg("Putting tokens in pot...")
+          setIsSubmitButtonLoading(true)
+          let didCompleteTransaction = false
+          // tokensToPut > 0 so players who did submitted 0 tokens do not get stuck here
+          while(tokensToPut > 0 && didCompleteTransaction == false) {
+            await contract.methods.getMyInfo().call({from: address}, async function(error, result){
+              // Update display with new information
+              let tokenTotal = result[1]
+              let inPotTokenTotal = result[2]
+              if(inPotTokenTotal > 0) {
+                setTokenTotal(tokenTotal)
+                setInPotTokenTotal(inPotTokenTotal)
+                setTokensToPut(0)
+                document.getElementById("tokensToGive").value = 0
+                setSuccessMsg("Tokens in pot! Wait for the round to end.")
+              didCompleteTransaction = true
+              }
             })
           }
-          
-          // Get new information for display
-          await contract.methods.getMyInfo().call({from: address}, function(error, result) {
-            console.log(error)
-            console.log(result)
-            // Update display
-            setTokenTotal(result[1])
-            setInPotTokenTotal(0)
-            setInputFormEnabled(true)
-            setSubmitButtonEnabled(true)
-            setSuccessMsg("A new round has started! Find your new token total above.")
-          })
+
+          // Wait until round passes, then update display with new information
+          waitForNewRound()
         })
       })
     } catch(err) {
@@ -279,16 +328,12 @@ const Game = () => {
     if(givenPassword == "go!") {
       setSuccessMsg("Playing the round! Calculating new totals...")
       // Call play round
-      await contract.methods.playRound().send({from: address}, async function(error, result) {
-        console.log(error)
-        console.log(result)
-
-        await contract.methods.getMyInfo().call({from: address}, function(error, result){
-          setSuccessMsg("Round played! See new token total above.")
-          console.log(error)
-          console.log(result)
-        })
-      })
+      let playedRound = false
+      while(playedRound == false) {
+        await contract.methods.playRound().send({from: address})
+        playedRound = true
+      }
+      setSuccessMsg("Round played! See new token total above.")
     }
     else {
       alert("Incorrect password.")
@@ -333,12 +378,12 @@ const Game = () => {
           <div id="input" style={{display: (isInputFormDisabled) ? 'none' : ''}}>
             <span>How many tokens do you want to put into the pot?</span>
             <input id="tokensToGive" onChange={updateTokensToPut} className="input is-info mt-4 mb-4" type="number" placeholder="0" />
-            <button id="submitButton" onClick={submitTokens} className="button is-primary mb-2" disabled={isSubmitButtonDisabled}>Submit</button>
+            <button id="submitButton" onClick={submitTokens} className={(isSubmitButtonLoading) ? "button is-primary mb-2 is-loading" : "button is-primary mb-2"} disabled={isSubmitButtonDisabled}>Submit</button>
           </div>
           <div className="mt-6 mb-6">
             <button id="connectWalletButton" onClick={connectWalletHandler} className="button is-primary mb-2" disabled={isConnectButtonDisabled}>Join Game</button>
             <br />
-            <button id="initializeButton" onClick={initializePlayerHandler} className="button is-primary mt-2" disabled={isInitializeButtonDisabled}>Initialize Player</button>
+            <button id="initializeButton" onClick={initializePlayerHandler} className={(isInitializeButtonLoading) ? "button is-primary mb-2 is-loading" : "button is-primary mb-2"} disabled={isInitializeButtonDisabled}>Initialize Player</button>
           </div>
           <div className="container has-text-danger is-size-5">
             <p>{error}</p>
