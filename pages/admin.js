@@ -29,6 +29,15 @@ Admin panel
   - Stop update check loop after round is updated
   */
 
+  /*
+  TODO:
+  1. Make play round button disabled / loading when waiting for round play to finish
+  2. Make buttons fit UI (like on other page)
+  3. Eventually move play.js content to index.js
+  4. Finish the reset finances / reset game buttons. Make them password protected?
+  5. Add basic information on how to play the game on the right column of the /play page
+*/
+
   const switchToReplitTestnet = async () => {
     window.ethereum.request({
       method: "wallet_addEthereumChain",
