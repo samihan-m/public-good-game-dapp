@@ -29,10 +29,6 @@ Admin panel
   - Stop update check loop after round is updated
   */
 
-  /*
-  Todo: add loading icons for the two reset buttons + play round
-  */
-
   const switchToReplitTestnet = async () => {
     window.ethereum.request({
       method: "wallet_addEthereumChain",
