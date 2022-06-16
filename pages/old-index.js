@@ -293,6 +293,7 @@ const Game = () => {
         currentRound = result
         // Call addTokens function
         await contract.methods.addTokens(tokensToPut).send({from: address}, async function(error, result) {
+<<<<<<< HEAD:pages/old-index.js
           setSuccessMsg("Putting tokens in pot...")
           setIsSubmitButtonLoading(true)
           let didCompleteTransaction = false
@@ -310,6 +311,28 @@ const Game = () => {
                 setSuccessMsg("Tokens in pot! Wait for the round to end.")
               didCompleteTransaction = true
               }
+=======
+          console.log(error)
+          console.log(result)
+
+          // Update display
+          setTokenTotal(parseInt(tokenTotal) - parseInt(tokensToPut))
+          setInPotTokenTotal(parseInt(inPotTokenTotal) + parseInt(tokensToPut))
+          setTokensToPut(0)
+          document.getElementById("tokensToGive").value = 0
+          setSuccessMsg("You played your turn this round! Please wait for everybody to take their turn.")
+
+          // Wait until round passes, then update display with new information
+          let newRound = currentRound
+          while(newRound == currentRound) {
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+            console.log("Waiting for new round...")
+            await sleep(2000)
+            await contract.methods.getRoundNumber().call({from: address}, async function(error, result) {
+              console.log(error)
+              console.log(result)
+              newRound = result
+>>>>>>> origin/main:pages/play.js
             })
           }
 
