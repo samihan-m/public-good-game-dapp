@@ -6,19 +6,44 @@ import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
 
 /*
-TODO:
-Things to do:
+Real TODO:
+What information does this page need?
 
-1. Ensure that playing a round updates clients waiting for new rounds 
-^ this seems to be good
-2. Make 'You currently have X tokens in pot' update after the submitTokens transaction FINISHES
-^ this seems to be good
-3. Make buttons have loading icons when stuff is loading
-- Submit
-- Initialize
+1. Your token count
+  -Load on startup, then update every time round progresses
+2. Your token in pot count
+  -Update on submit-button-click, reset every time round progresses
+3. Round number
+  -Update every time round progresses
+4. Is this needed? - Number of players you're playing with
+  -Auto-update via check loop
+5. What your gain was from last round
+  -Update every time round progresses
+6. What each other player put in last round
+  -Update every time round progresses
+7. What each other player put in the last last round
+  -Update every time round progresses
+
+1. Connect wallet
+  -Disabled on connect, starts info fetch loop
+2. Request tokens (INITIALIZE PLAYER)
+  -Hidden until connected, hidden if initialized already -> hidden upon initialization
+  -Loading until contract says player is initialized
+3. Number input for tokens
+  -Hidden until connected + initialized -> visible forever
+4. Submit tokens
+  -Hidden until connected + initialized -> enabled until valid submission -> disabled until round progression
+  -Loading until contract says player is submitted
 
 
+FSM
+Disabled -> Enabled -> Loading
+D, Initialized -> E
+E, Bad Click -> E
+E, Good Click -> L
+L, Confirm -> D
 */
+
 const Game = () => {
 
   const switchToReplitTestnet = async () => {
@@ -42,150 +67,171 @@ const Game = () => {
     });
   }
 
-  const [error, setError] = useState("")
-  const [successMsg, setSuccessMsg] = useState("")
-  const [tokenTotal, setTokenTotal] = useState(0)
-  const [inPotTokenTotal, setInPotTokenTotal] = useState(0)
-  const [tokensToPut, setTokensToPut] = useState(0)
-  const [web3, setWeb3] = useState(null)
-  const [address, setAddress] = useState(null)
-  const [contract, setContract] = useState(null)
+  const buttonStates = {
+    DISABLED: 0,
+    ENABLED: 1,
+    LOADING: 2,
+  };
 
-  const [isConnectButtonDisabled, setIsConnectButtonDisabled] = useState(false)
-  const [isInitializeButtonDisabled, setIsInitalizeButtonDisabled] = useState(true)
-  const [isInputFormDisabled, setIsInputFormDisabled] = useState(true)
-  const [isSubmitButtonDisabled, setIsSubmitButtonDisabled] = useState(true)
-  const [isSubmitButtonLoading, setIsSubmitButtonLoading] = useState(false)
-  const [isInitializeButtonLoading, setIsInitializeButtonLoading] = useState(false)
+  const [tokens, setTokens] = useState(0);
+  const [potTokens, setPotTokens] = useState(0);
+  const [tokensToGive, setTokensToGive] = useState(0);
+  const [roundNumber, setRoundNumber] = useState(-1);
+  /*
+  Array of Arrays where each subarray has 4 elements
+  (All the values are in strings so convert them when needed)
+  0. Player id (address)
+  1. Tokens in wallet (int)
+  2. Tokens in pot (int)
+  3. Has the player submitted (bool)
+  */
+  const [roundInfo, setRoundInfo] = useState([]);
+  const [lastRoundInfo, setLastRoundInfo] = useState([]);
+  // use web3 to determine if wallet is connected
+  const [initializerState, setInitializerState] = useState(buttonStates.DISABLED);
+  const [submitterState, setSubmitterState] = useState(buttonStates.DISABLED);
+
+  const [log, setLog] = useState("Useful information will appear here.");
+  const [web3, setWeb3] = useState(null);
+  const [address, setAddress] = useState(null);
+  const [contract, setContract] = useState(null);
+  
+  // For disabling contract read loop
+  const [isGameRunning, setIsGameRunning] = useState(true);
+
+  // Used for sleeping during ping loops
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // Update state variable with user input on change
+  const updateTokensToGive = event => {
+    setTokensToGive(event.target.value)
+  }
+
+  // Load all possible information from the contract
+  const readGameState = async() => {
+    let enterWaitLoop = false;
+    try {
+      await contract.methods.getMyPlayer().call({from: address}, async function(error, result) {
+        if(error) console.log(error);
+        // console.log("Player: " + result);
+        if(/^0x0+$/.test(result.id)) {
+          // Player doesn't exist yet
+          setInitializerState(buttonStates.ENABLED);
+          setSubmitterState(buttonStates.DISABLED);
+          setLog("Request tokens to play.")
+        }
+        else {
+          // Player exists, display player-specific data
+          setInitializerState(buttonStates.DISABLED);
+          setTokens(result.walletTokens);
+          setPotTokens(result.potTokens);
+          if(result.submitted == true) {
+            setSubmitterState(buttonStates.DISABLED);
+            enterWaitLoop = true;
+          }
+          else {
+            setSubmitterState(buttonStates.ENABLED);
+          }
+          // setSubmitterState(result.submitted ? buttonStates.DISABLED : buttonStates.ENABLED);
+        }
+      })
+      await contract.methods.getCurrentRoundNumber().call({from: address}, async function(error, roundNumber) {
+        roundNumber = parseInt(roundNumber);
+        if(error) console.log(error);
+        // console.log(result);
+        let roundIndex = roundNumber - 1;
+        setRoundNumber(roundNumber);
+        if(roundIndex <= 0) {
+          console.log("No previous round exists.");
+          return;
+        }
+        await contract.methods.getRoundData(roundIndex - 1).call({from: address}, async function(error, result) {
+          if(error) console.log(error);
+          // console.log(result);
+          setRoundInfo(result);
+          updateLastRoundInfo(result);
+        })
+        if(roundIndex <= 1) {
+          // console.log("No previous previous round exists.")
+          return;
+        }
+        await contract.methods.getRoundData(roundIndex - 2).call({from: address}, async function(error, result) {
+          if(error) console.log(error);
+          // console.log(result);
+          setLastRoundInfo(result);
+          updateLastLastRoundInfo(result);
+        })
+      })
+      if(enterWaitLoop == true) {
+        waitForNewRound();
+      }
+    } catch(err) {
+      if(error) console.log(err)
+      alert("Error fetching game information. Check console log.")
+    }
+  }
+
+  const calculateRoundRevenue = (playerList) => {
+    let potTotal = 0;
+    for(let player of playerList) {
+      potTotal += parseInt(player[2]);
+    }
+    // Formula in contract: 
+    // uint revenuePerCapita = (potTotal * 14)/10/playerCount;
+    let revenue = (potTotal * 1.4)/playerList.length;
+    return Math.floor(revenue);
+  }
+  
+  const getDataReport = (playerList) => {
+    let lastRoundReport = "";
+    let revenue = calculateRoundRevenue(playerList);
+    let index = 1;
+    let tokensGivenLastRound = -1;
+    let potTotal = 0;
+    for(let player of playerList) {
+      potTotal += parseInt(player[2]);
+      if(player[0] == address.toString()) {
+        tokensGivenLastRound = player[2];
+      }
+      let playerReport = `Last round player ${index} put ${player[2]} tokens into the pot.`;
+      index += 1;
+      lastRoundReport += `\n${playerReport}`;
+    }
+    if(tokensGivenLastRound == -1) {
+      // The player did not exist last round.
+      // Show that this player did not get any money for playing (because they did not play LOL)
+      tokensGivenLastRound = 0;
+      revenue = 0;
+    }
+    lastRoundReport += `\nYou gave ${tokensGivenLastRound} tokens last round and earned ${revenue}, for a profit of ${revenue - tokensGivenLastRound}.`;
+    lastRoundReport += `\nThe pot size last round was ${potTotal} tokens.`;
+    return lastRoundReport;
+  }
+
+  const updateLastRoundInfo = (playerList) => {
+    let dataReport = getDataReport(playerList);
+    const dataDisplay = document.getElementById("lastRoundInfo");
+    dataDisplay.innerText = dataReport;
+  }
+
+  const updateLastLastRoundInfo = (playerList) => {
+    let dataReport = getDataReport(playerList);
+    const dataDisplay = document.getElementById("lastLastRoundInfo");
+    dataDisplay.innerText = dataReport;
+  }
 
   useEffect(() => {
-    if(contract && address) getInfoHandler()
+    if(contract && address) {
+      // Load game data
+      readGameState();
+    }
   }, [contract, address])
-
-  const setConnectButtonEnabled = async (status) => {
-    const connectButton = document.getElementById("connectWalletButton")
-    if(status == true) {
-      connectButton.innerText = "Connect Wallet"
-      setIsConnectButtonDisabled(false)
-    }
-    else {
-      connectButton.innerText = "Connected"
-      setIsConnectButtonDisabled(true)
-    }
-  }
-
-  const setInitializeButtonEnabled = async (status) => {
-    const initializeButton = document.getElementById("initializeButton")
-    if(status == true) {
-      initializeButton.innerText = "Initialize Player"
-      setIsInitalizeButtonDisabled(false)
-    }
-    else {
-      initializeButton.innerText = "Initialized"
-      setIsInitalizeButtonDisabled(true)
-    }
-  }
-
-  const setInputFormEnabled = async (status) => {
-    if(status == true) {
-      setIsInputFormDisabled(false)
-      setIsSubmitButtonDisabled(false)
-    }
-    else {
-      setIsInputFormDisabled(true)
-      setIsSubmitButtonDisabled(true)
-    }
-  }
-
-  const setSubmitButtonEnabled = async (status) => {
-    const submitButton = document.getElementById("submitButton")
-    if(status == true) {
-      submitButton.innerText = "Submit"
-      setIsSubmitButtonDisabled(false)
-    }
-    else {
-      submitButton.innerText = "Submitted"
-      setIsSubmitButtonDisabled(true)
-    }
-  }
-
-  const waitForNewRound = async() => {
-    try {
-      // Get current round number from chain so we know when the round has passed
-      let currentRound
-      await contract.methods.getRoundNumber().call({from: address}, async function(error, result) {
-        console.log(error)
-        console.log("Current round number: " + result)
-        currentRound = result
-        let newRound = currentRound
-          while(newRound == currentRound) {
-            const sleep = ms => new Promise(r => setTimeout(r, ms));
-            console.log("Waiting for new round...")
-            await sleep(2000)
-            await contract.methods.getRoundNumber().call({from: address}, async function(error, result) {
-              console.log(error)
-              console.log(result)
-              newRound = result
-            })
-          }
-          
-          // Get new information for display
-          await contract.methods.getMyInfo().call({from: address}, function(error, result) {
-            console.log(error)
-            console.log(result)
-            // Update display
-            setTokenTotal(result[1])
-            setInPotTokenTotal(0)
-            setInputFormEnabled(true)
-            setSubmitButtonEnabled(true)
-            setIsSubmitButtonLoading(false)
-            setSuccessMsg("A new round has started! Find your new token total above.")
-          })
-        })
-    } catch(err) {
-      setError(err)
-    }
-  }
-
-  const getInfoHandler = async () => {
-    // Get information from blockchain
-    await contract.methods.getMyInfo().call({from: address}, function(error, result){
-      console.log(error)
-      console.log(result)
-
-      let isInitialized = result[0]
-      let tokenTotal = result[1]
-      let inPotTokenTotal = result[2]
-
-      // If user is uninitialized, inform them + allow them to click Initialize Player
-      if(isInitialized == false){
-        // alert("You must initialize your player account!")
-        console.log("You must initialize your player account!")
-        setError("You have to Initialize Player before you can play.")
-        setInitializeButtonEnabled(true)
-      }
-      // If the user is initialized, load their data and give them access to the game
-      else {
-        setInitializeButtonEnabled(false)
-        setSuccessMsg("Player information loaded successfully. You may now play!")
-        setError("")
-        setInputFormEnabled(true)
-        setTokenTotal(tokenTotal)
-        setInPotTokenTotal(inPotTokenTotal)
-
-        if(parseInt(inPotTokenTotal) > 0) {
-          setIsSubmitButtonDisabled(true)
-          setSuccessMsg("You already submitted your turn this round. Wait for the next round!")
-          waitForNewRound()
-        }
-      }
-    })
-  }
 
   const connectWalletHandler = async() => {
     // Check if Metamask is installed
     if(typeof window == "undefined" || typeof window.ethereum == "undefined") {
-      setError("Please install Metamask!")
+      alert("Please install Metamask!")
+      return;
     }
 
     try {
@@ -208,151 +254,124 @@ const Game = () => {
       const contract = gameContract(web3)
       setContract(contract)
 
-      setSuccessMsg("Wallet connected successfully.")
-      setError("")
-
-      // Disable Connect button
-      setConnectButtonEnabled(false)
+      setLog("Wallet connected successfully.")
+      
     } catch(err) {
       console.log(err.message)
-      setError(err.message + "\nTry installing Metamask")
+      alert("Something broke. Check console logs.")
     } 
     
   }
 
   const initializePlayerHandler = async() => {
     // Disable initialize button so users do not do it multiple times
-    setInitializeButtonEnabled(false)
-    setIsInitializeButtonLoading(true)
+    setInitializerState(buttonStates.LOADING);
     
-    setSuccessMsg("Initializing player, please wait...")
-    
-    try {
-      // Call initializePlayer contract function
-      await contract.methods.initializePlayer().send({
-        from: address,
-      }, async function(error, result){
-        // Now reload player info
-        var isInitialized = false
-        while(isInitialized == false) {
-          await contract.methods.getMyInfo().call({from: address}, function(error, result){
-            isInitialized = result[0]
-            let tokenTotal = result[1]
-            let inPotTokenTotal = result[2]
-
-            if(isInitialized == false) {
-              return
-            }
-  
-            // Update display
-            setTokenTotal(tokenTotal)
-            setInPotTokenTotal(inPotTokenTotal)
-      
-            setSuccessMsg("Player information loaded successfully. You may now play!")
-            setError("")
-
-            setIsInitializeButtonLoading(false)
-
-            // Enable game form
-            setInputFormEnabled(true)
-          })
-        }
-      })
-    } catch(err) {
-      setError(err.message)
-    }
-    
-  }
-
-  // Update state variable with user input on change
-  const updateTokensToPut = event => {
-    setTokensToPut(event.target.value)
-  }
-
-  const submitTokens = async() => {
-    // Validate input
-    if(tokensToPut != parseInt(tokensToPut)) {
-      setError("The value must be a number.")
-      return
-    }
-    if(parseInt(tokensToPut) > parseInt(tokenTotal)) {
-      setError("You can't put more tokens than you own.")
-      return
-    }
-    setError("")
-
-    // Disable button so users can only submit once per round
-    setSubmitButtonEnabled(false)
+    setLog("Requesting tokens, please wait...");
 
     try {
-      // Get current round number from chain so we know when the round has passed
-      let currentRound
-      await contract.methods.getRoundNumber().call({from: address}, async function(error, result) {
-        console.log(error)
-        console.log("Current round number: " + result)
-        currentRound = result
-        // Call addTokens function
-        await contract.methods.addTokens(tokensToPut).send({from: address}, async function(error, result) {
-          setSuccessMsg("Putting tokens in pot...")
-          setIsSubmitButtonLoading(true)
-          let didCompleteTransaction = false
-          // tokensToPut > 0 so players who did submitted 0 tokens do not get stuck here
-          while(tokensToPut > 0 && didCompleteTransaction == false) {
-            await contract.methods.getMyInfo().call({from: address}, async function(error, result){
-              // Update display with new information
-              let tokenTotal = result[1]
-              let inPotTokenTotal = result[2]
-              if(inPotTokenTotal > 0) {
-                setTokenTotal(tokenTotal)
-                setInPotTokenTotal(inPotTokenTotal)
-                setTokensToPut(0)
-                document.getElementById("tokensToGive").value = 0
-                setSuccessMsg("Tokens in pot! Wait for the round to end.")
-              didCompleteTransaction = true
+      // Initialize player
+      await contract.methods.initMyPlayer().send({
+          from: address,
+        }, async function(error, hash) {
+          const interval = setInterval(function() {
+            web3.eth.getTransactionReceipt(hash, function(err, rec) {
+              if (rec) {
+                // Update information
+                setInitializerState(buttonStates.DISABLED);
+                readGameState();
+                // Open access to game
+                setSubmitterState(buttonStates.ENABLED);
+                setLog("You can now play!")
+                clearInterval(interval);
               }
-            })
-          }
+            });
+          }, 1000);
+        }
+      )
+    }
+    catch (err) {
+      alert("Failed to request tokens for new player! Check console for more detail.");
+      console.log(err);
+    }
+  }
 
-          // Wait until round passes, then update display with new information
-          waitForNewRound()
-        })
+  // Read game state on loop until the round changes then do something
+  const waitForNewRound = async() => {
+    setLog("Waiting for this round to be completed...")
+    let doKeepWaiting = true;
+    let currentRoundNumber;
+    try {
+      await contract.methods.getCurrentRoundNumber().call({
+        from: address
+      }, async function(error, _roundNumber) {
+          if(error) console.log(error);
+          setRoundNumber(parseInt(_roundNumber));
+          currentRoundNumber = parseInt(_roundNumber);
       })
     } catch(err) {
-      setError(err)
+      
     }
-  }
-
-  const playRoundHandler = async() => {
-    // Ask for password
-    const givenPassword = prompt("Enter play round password:")
-    if(givenPassword == "go!") {
-      setSuccessMsg("Playing the round! Calculating new totals...")
-      // Call play round
-      let playedRound = false
-      while(playedRound == false) {
-        await contract.methods.playRound().send({from: address})
-        playedRound = true
+    while(doKeepWaiting) {
+      try {
+        await sleep(1000);
+        await contract.methods.getMyPlayer().call({
+            from: address
+          }, async function(error, player) {
+            if(error) console.log(error);
+            if(player.submitted == false) {
+              doKeepWaiting = false;
+            }
+          }
+        )
+      } catch(err) {
+        alert("Something broke while waiting for the round to pass! Check console for more details.");
+        console.log(err);
       }
-      setSuccessMsg("Round played! See new token total above.")
     }
-    else {
-      alert("Incorrect password.")
-    }
+    readGameState();
+    setLog(`Round ${currentRoundNumber} complete!\nNow playing round ${currentRoundNumber + 1}.`);
+    setRoundNumber(currentRoundNumber + 1);
   }
 
-  /*
-  What components does this page need?
+  // Submit tokens to chain
+  const submitHandler = async() => {
+    // Validate input
+    if(tokensToGive != parseInt(tokensToGive)) {
+      setLog("The provided value must be a number.");
+      return;
+    }
+    if(parseInt(tokensToGive) > parseInt(tokenTotal)) {
+      setLog("You can't put in more tokens than you own.");
+      return;
+    }
+    // Can uncomment this if it's useful
+    setLog("Submitting...");
+    setSubmitterState(buttonStates.LOADING);
 
-  What does the UI need?
-  1. A way to see current game state (Your info - total tokens + amount in pot + maybe amount of players playing?)
-  2. A way to add tokens to pot
-  3. A way to play the round (maybe once everybody clicks a button 'confirm' it auto plays the round?)
-
-  So the components are:
-  1. Display the amount of connected players at the top??
-  2. Player info display (total tokens, amount in pot)
-  3. Add tokens component (amount, confirm)
-  */
+    // Post to chain
+    try {
+      await contract.methods.addTokensToPot(tokensToGive).send({
+          from: address,
+        }, async function(error, hash) {
+          const interval = setInterval(function() {
+          web3.eth.getTransactionReceipt(hash, async function(err, rec) {
+            if (rec) {
+              setSubmitterState(buttonStates.DISABLED);
+              clearInterval(interval);
+              document.getElementById("tokensToGive").value = 0;
+              setTokensToGive(0);
+              readGameState();
+            }
+          });
+        }, 1000);
+        }
+      )
+    } catch(err) {
+      alert("Adding tokens to pot failed! Check console for more details.");
+      console.log(err);
+    }
+  }
 
   return (
     <div className={styles.main}>
@@ -368,31 +387,42 @@ const Game = () => {
         </div>
       </nav>
       <section id="game" className="columns">
-        <div className="column is-one-third"></div>
-        <div className="has-text-centered column is-one-third is-size-4">
-          <div id="playerInfo" className="container">
-            <p id="tokenTotal">You have {tokenTotal} tokens.</p>
-            <p id="inPotTokenTotal">You currently have {inPotTokenTotal} tokens in the pot.</p>
+        <div className="has-text-centered column is-one-third">
+          <div className="is-size-4" style={{display: (roundInfo.length <= 0) ? 'none' : ''}}>
+            Previous Round Reports
+          </div>
+          <div id="lastRoundReport" style={{display: (roundInfo.length <= 0) ? 'none' : ''}}>
+            <p className="is-size-5">Last Round:</p>
+            <p id="lastRoundInfo"></p>
           </div>
           <br></br>
-          <div id="input" style={{display: (isInputFormDisabled) ? 'none' : ''}}>
+          <div id="lastLastRound" style={{display: (lastRoundInfo.length <= 1) ? 'none' : ''}}>
+            <p className="is-size-5">Last Last Round:</p>
+            <p id="lastLastRoundInfo"></p>
+          </div>
+        </div>
+        <div className="has-text-centered column is-one-third is-size-4">
+          <div id="roundNumber" className="" style={{display: (web3 === null) ? 'none' : ''}}>
+            Round {roundNumber}
+          </div>
+          <br></br>
+          <div id="playerInfo" className="container" style={{display: (web3 === null) ? 'none' : ''}}>
+            <p id="tokenTotal">You have {tokens} tokens.</p>
+            <p id="inPotTokenTotal">You currently have {potTokens} tokens in the pot.</p>
+          </div>
+          <br></br>
+          <div id="input" style={{display: (submitterState == buttonStates.DISABLED) ? 'none' : ''}}>
             <span>How many tokens do you want to put into the pot?</span>
-            <input id="tokensToGive" onChange={updateTokensToPut} className="input is-info mt-4 mb-4" type="number" placeholder="0" />
-            <button id="submitButton" onClick={submitTokens} className={(isSubmitButtonLoading) ? "button is-primary mb-2 is-loading" : "button is-primary mb-2"} disabled={isSubmitButtonDisabled}>Submit</button>
+            <input id="tokensToGive" onChange={updateTokensToGive} className="input is-info mt-4 mb-4" type="number" placeholder="0" />
+            <button id="submitButton" onClick={submitHandler} className={(submitterState != buttonStates.ENABLED) ? "button is-primary mb-2 is-loading" : "button is-primary mb-2"} disabled={(submitterState != buttonStates.ENABLED) ? true : false}>Submit</button>
           </div>
           <div className="mt-6 mb-6">
-            <button id="connectWalletButton" onClick={connectWalletHandler} className="button is-primary mb-2" disabled={isConnectButtonDisabled}>Join Game</button>
+            <button id="connectWalletButton" onClick={connectWalletHandler} className="button is-primary mb-2" style={{display: (web3 === null) ? '' : 'none'}} disabled={web3 === null ? false : true}>Join Game</button>
             <br />
-            <button id="initializeButton" onClick={initializePlayerHandler} className={(isInitializeButtonLoading) ? "button is-primary mb-2 is-loading" : "button is-primary mb-2"} disabled={isInitializeButtonDisabled}>Initialize Player</button>
+            <button id="initializeButton" onClick={initializePlayerHandler} className={(initializerState == buttonStates.LOADING) ? "button is-primary mb-2 is-loading" : "button is-primary mb-2"} disabled={(initializerState != buttonStates.ENABLED) ? true : false} style={{display: (initializerState == buttonStates.DISABLED) ? 'none' : ''}}>Request Tokens</button>
           </div>
-          <div className="container has-text-danger is-size-5">
-            <p>{error}</p>
-          </div>
-          <div className="container has-text-success is-size-5">
-            <p>{successMsg}</p>
-          </div>
-          <div>
-            <button id="playRoundButton" onClick={playRoundHandler} className="button is-danger mt-2">ADMIN ONLY:<br/>Play Round</button>
+          <div className="container has-text-success is-size-4" style={{display: (web3 === null) ? 'none' : ''}}>
+            <p>{log}</p>
           </div>
         </div>
         <div className="column is-one-third"></div>

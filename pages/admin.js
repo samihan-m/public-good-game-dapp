@@ -29,6 +29,10 @@ Admin panel
   - Stop update check loop after round is updated
   */
 
+  /*
+  Todo: add loading icons for the two reset buttons + play round
+  */
+
   const switchToReplitTestnet = async () => {
     window.ethereum.request({
       method: "wallet_addEthereumChain",
@@ -50,10 +54,11 @@ Admin panel
     });
   }
 
-  const [log, setLog] = useState("Game-relevant information will appear here.");
+  const [log, setLog] = useState("Game-relevant information will appear here.\nClick Connect Wallet to begin.");
   const [connectedPlayerCount, setCPC] = useState(-1);
   const [unsubmittedPlayerCount, setUPC] = useState(-1);
   const [roundNumber, setRoundNumber] = useState(-1);
+  const [isRoundPlaying, setIsRoundPlaying] = useState(false);
 
   const [web3, setWeb3] = useState(null);
   const [address, setAddress] = useState(null);
@@ -108,7 +113,7 @@ Admin panel
       setContract(contract)
 
       // Update display
-      setLog("Wallet connected successfully.")
+      setLog("Wallet connected successfully.\nHave at least 2 players join and submit tokens in order to play a round.")
     } catch(err) {
       console.log(err.message)
       alert(err.message + "\nTry installing Metamask")
@@ -167,6 +172,7 @@ Admin panel
       return;
     }
     try {
+      setIsRoundPlaying(true);
       await contract.methods.playRound().send({
           from: address,
         }, async function(error, hash) {
@@ -189,6 +195,7 @@ Admin panel
       alert("Playing the round failed. Check console for more details.");
       console.log(err);
     }
+    setIsRoundPlaying(false);
   }
 
   const collectGameData = async() => {
@@ -204,7 +211,7 @@ Admin panel
       });
       let maxRoundNumber;
       if(currentRoundNumber <= 1) {
-        alert("There isn't any data yet!");
+        alert("The graph has no data to display.");
         return [];
       }
       // -1 because we don't yet have data for the current round
@@ -263,12 +270,12 @@ Admin panel
     a.hidden = true;
     document.body.appendChild(a);
     a.innerHTML =
-      "ClickHereForData";
+      "you shouldn't be able to read this :P";
     a.click();
   }
 
   const saveFile = async() => {
-    downloadFile({"labels": chartLabels, "datasets": chartDatasets});
+    downloadFile({"rounds": chartLabels, "playerData": chartDatasets});
   }
 
   // Graph stuff
@@ -362,7 +369,6 @@ Admin panel
     if(playerTimelines.size == 0) {
       return;
     }
-    // TODO: Update the chartLabels and chartData variables
     let labels = [];
     let maxRounds = -1;
     for(var key in playerTimelines) {
@@ -375,11 +381,14 @@ Admin panel
     }
     setChartLabels(labels);
 
-    let colors = randomColors(Object.keys(playerTimelines).length * 2);
+    // Three colors per player: total tokens, wallet tokens, pot tokens
+    const DATASETS_PER_PLAYER = 3;
+    let colors = randomColors(Object.keys(playerTimelines).length * DATASETS_PER_PLAYER);
     
     let datasets = [];
     let playerCounter = 0;
     for(var key in playerTimelines) {
+      let totalTokensDataset = {};
       let walletTokensDataset = {};
       let potTokensDataset = {};
       /*
@@ -390,21 +399,27 @@ Admin panel
         },
       ],
       */
-      walletTokensDataset["label"] = `Player ${playerCounter + 1} Wallet Tokens`;
-      potTokensDataset["label"] = `Player ${playerCounter + 1} Pot Tokens`;
+      totalTokensDataset["label"] = `P${playerCounter + 1} Total Tokens`;
+      walletTokensDataset["label"] = `P${playerCounter + 1} Wallet`;
+      potTokensDataset["label"] = `P${playerCounter + 1} Pot`;
       let playerTimeline = playerTimelines[key];
+      let newTotalTokensData = [];
       let newWalletData = [];
       let newPotData = [];
-      for(let finances of playerTimeline) {
+      for(let finances of playerTimeline) {         newTotalTokensData.push(parseInt(finances["walletTokens"]) + parseInt(finances["potTokens"]));
         newWalletData.push(finances["walletTokens"]);
         newPotData.push(finances["potTokens"]);
       }
+      totalTokensDataset["data"] = newTotalTokensData;
       walletTokensDataset["data"] = newWalletData;
       potTokensDataset["data"] = newPotData;
-      walletTokensDataset["borderColor"] = colors[2*playerCounter];
-      potTokensDataset["borderColor"] = colors[2*playerCounter + 1];
-      walletTokensDataset["backgroundColor"] = colors[2*playerCounter];
-      potTokensDataset["backgroundColor"] = colors[2*playerCounter + 1];
+      totalTokensDataset["borderColor"] = colors[DATASETS_PER_PLAYER*playerCounter]
+      walletTokensDataset["borderColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 1];
+      potTokensDataset["borderColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 2];
+      totalTokensDataset["backgroundColor"] = colors[DATASETS_PER_PLAYER*playerCounter];
+      walletTokensDataset["backgroundColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 1];
+      potTokensDataset["backgroundColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 2];
+      datasets.push(totalTokensDataset);
       datasets.push(walletTokensDataset);
       datasets.push(potTokensDataset);
       console.log(`Added datasets for player ${playerCounter}: ${walletTokensDataset} ${potTokensDataset}`);
@@ -413,12 +428,64 @@ Admin panel
     setChartDatasets(datasets);
   }
 
+  const isPasswordCorrect = (password) => {
+    return (password == "btu22");
+  }
+
   const resetPlayerFinances = async() => {
-    alert("Not yet implemented.");
+    let givenPassword = window.prompt("This will reset all player token counts to the default starting value (probably 100). Enter password to confirm:");
+    if(isPasswordCorrect(givenPassword) == false) {
+      alert("Incorrect password.");
+      return;
+    }
+    try {
+      await contract.methods.resetAllPlayerFinances().send({
+        from: address,
+      }, async function(error, hash) {
+        setLog("Resetting player finances...");
+        const interval = setInterval(function() {
+          web3.eth.getTransactionReceipt(hash, function(err, rec) {
+            if (rec) {
+              clearInterval(interval);
+              setLog("All players token counts reset!");
+              updateCurrentRoundNumber();
+              createGraph();
+            }
+          });
+        }, 1000);
+      })
+    } catch(err) {
+      alert("Resetting player finances failed. Check console for details.")
+      console.log(err);
+    }
   }
 
   const resetGame = async() => {
-    alert("Not yet implemented.");
+    let givenPassword = window.prompt("This will completely reset everything, including player token counts and deleting all previous round information from the game. Enter password to confirm:");
+    if(isPasswordCorrect(givenPassword) == false) {
+      alert("Incorrect password.");
+      return;
+    }
+    try {
+      await contract.methods.completelyResetGame().send({
+        from: address,
+      }, async function(error, hash) {
+        setLog("Resetting the entire game...");
+        const interval = setInterval(function() {
+          web3.eth.getTransactionReceipt(hash, function(err, rec) {
+            if (rec) {
+              clearInterval(interval);
+              setLog("The game has been reset!");
+              updateCurrentRoundNumber();
+              createGraph();
+            }
+          });
+        }, 1000);
+      })
+    } catch(err) {
+      alert("Resetting the game failed. Check console for details.")
+      console.log(err);
+    }
   }
   
   return (
@@ -433,11 +500,15 @@ Admin panel
             <h1>Public Good Game Admin Panel</h1>
           </div>
           <div className="navbar-end">
-            <button id="connectWalletButton" onClick={connectWalletHandler} disabled={web3 === null ? false : true} className="button is-primary mb-2">{web3 === null ? "Connect Wallet" : "Connected"}</button>
           </div>
         </div>
       </nav>
-      <section id="game" className="has-text-centered">
+      <section id="connectButtonSection" className="has-text-centered" style={{display: (web3 === null ? "" : "none")}}>
+        <div id="connectButtonContainer">
+          <button id="connectWalletButton" onClick={connectWalletHandler} disabled={web3 === null ? false : true} className="button is-primary mb-2">{web3 === null ? "Connect Wallet" : "Connected"}</button>
+        </div>
+      </section>
+      <section id="game" className="has-text-centered" style={{display: (web3 === null ? "none" : "")}}>
         <div id="info" className="">
           <h2 id="log">{log}</h2>
           <br></br>
@@ -446,10 +517,11 @@ Admin panel
           <p id="unsubmittedPlayersCount">Players yet to submit: {unsubmittedPlayerCount}</p>
         </div>
         <div id="playButtons" className="">
-          <button id="playRound" disabled={(unsubmittedPlayerCount == 0) ? false : true} onClick={playRoundHandler}>Play Round</button>
-          <button id="saveData" disabled={(roundNumber > 1) ? false : true} onClick={saveFile}>Save Data</button>
+          <button id="playRound" className="button mx-2" 
+            disabled={((unsubmittedPlayerCount == 0) && (connectedPlayerCount > 0) && (isRoundPlaying == false)) ? false : true} onClick={playRoundHandler}>Play Round</button>
+          <button id="saveData" className="button mx-2" disabled={(roundNumber > 1) ? false : true} onClick={saveFile}>Save Data</button>
         </div>
-        <div id="data" className="" style={{padding: "0% 15% 0% 15%"}}>
+        <div id="data" className="" style={{padding: "0% 15% 0% 15%", height: "75%"}}>
           { chartDatasets ? (
             <Line
               data={data}
@@ -457,8 +529,8 @@ Admin panel
             ) : null}
         </div>
         <div id="resetButtons" className="">
-          <button id="resetPlayerFinances" onClick={resetPlayerFinances}>Reset Player Finances</button>
-          <button id="resetGame" onClick={resetGame}>Reset Game</button>
+          <button id="resetPlayerFinances" className="button is-danger mx-2" onClick={resetPlayerFinances}>Reset Player Finances</button>
+          <button id="resetGame" className="button is-danger mx-2" onClick={resetGame}>Reset Game</button>
         </div>
       </section>
     </div>
