@@ -1,9 +1,11 @@
 import Head from 'next/head'
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/router'
 import Web3 from 'web3'
 import gameContract from '../blockchain/game'
 import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
+import Navbar from '../components/navbar.js'
 import { Chart as ChartJS } from 'chart.js/auto'
 import { Chart } from 'react-chartjs-2'
 import {Line} from 'react-chartjs-2';
@@ -54,6 +56,12 @@ Admin panel
     });
   }
 
+  const buttonStates = {
+    DISABLED: 0,
+    ENABLED: 1,
+    LOADING: 2,
+  };
+
   const [log, setLog] = useState("Game-relevant information will appear here.\nClick Connect Wallet to begin.");
   const [connectedPlayerCount, setCPC] = useState(-1);
   const [unsubmittedPlayerCount, setUPC] = useState(-1);
@@ -64,16 +72,25 @@ Admin panel
   const [address, setAddress] = useState(null);
   const [contract, setContract] = useState(null);
 
-  const [gameData, setGameData] = useState([]);
-
-  // Used for disabling contract ping loops
+  // TODO Eventually maybe use this to turn the blockchain ping loop off if there's some inactivity or something
   const [isGameRunning, setIsGameRunning] = useState(true);
+
   // Used for sleeping during ping loops
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  // RAW PLAYER DATA
+  const [playerData, setPlayerData] = useState([]);
+  
   // FORMATTED CHART DATA
   const [chartLabels, setChartLabels] = useState([]);
   const [chartDatasets, setChartDatasets] = useState([]);
+
+  const [connectorState, setConnectorState] = useState(buttonStates.DISABLED);
+  const [roundStarterState, setRoundStarterState] = useState(buttonStates.DISABLED);
+  const [moneyResetterState, setMoneyResetterState] = useState(buttonStates.ENABLED);
+  const [gameResetterState, setGameResetterState] = useState(buttonStates.ENABLED);
+
+  const router = useRouter();
 
   const data = {
     labels: chartLabels,
@@ -113,32 +130,33 @@ Admin panel
       setContract(contract)
 
       // Update display
-      setLog("Wallet connected successfully.\nHave at least 2 players join and submit tokens in order to play a round.")
+      setLog("Have at least 2 players join and submit tokens in order to play a round.")
+      setConnectorState(buttonStates.DISABLED);
     } catch(err) {
-      console.log(err.message)
-      alert(err.message + "\nTry installing Metamask")
+      console.log(err.message);
+      alert(err.message + "\nTry installing Metamask");
     } 
   }
 
   // Fetch player count / unsubmitted player count regularly and keep display updated
   const playerInfoCheckLoop = async() => {
     try {
-      let connectedPlayers = -1;
-      let unsubmittedPlayers = -1;
       while(isGameRunning) {
           await sleep(1000);
           await contract.methods.getPlayerCount().call({from: address}, async function(error, result) {
-            // console.log("getPlayerCount:")
-            // console.log(error);
-            // console.log(result);
-            connectedPlayers = result;
+            if(error) {
+              alert("Something broke while trying to read game information from the blockchain! Check console for details.");
+              console.log(error);
+            }
+            let connectedPlayers = result;
             setCPC(connectedPlayers);
           })
           await contract.methods.getUnsubmittedPlayerCount().call({from: address}, async function(error, result) {
-            // console.log("getUnsubmittedPlayerCount:")
-            // console.log(error);
-            // console.log(result);
-            unsubmittedPlayers = result;
+            if(error) {
+              alert("Something broke while trying to read game information from the blockchain! Check console for details.");
+              console.log(error);
+            }
+            let unsubmittedPlayers = result;
             setUPC(unsubmittedPlayers);
           })
       }
@@ -152,10 +170,24 @@ Admin panel
     await contract.methods.getCurrentRoundNumber().call({
         from: address,
       }, async function(error, roundNumber) {
+        if(error) {
+          alert("Something broke while trying to read the current round number from the blockchain! Check console for details.")
+          console.log(error);
+        }
         setRoundNumber(parseInt(roundNumber));
       }
     )
   }
+
+  useEffect(() => {
+    if(!contract && !address) {
+      connectWalletHandler();
+      // if contract + address still not initialized then show join game button
+      if(web3 === null) {
+        setConnectorState(buttonStates.ENABLED);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if(contract && address) {
@@ -166,21 +198,38 @@ Admin panel
     }
   }, [contract, address])
 
+  useEffect(() => {
+    if(connectedPlayerCount >= 2 && unsubmittedPlayerCount == 0 && roundStarterState == buttonStates.DISABLED) {
+      setRoundStarterState(buttonStates.ENABLED);
+    }
+  }, [unsubmittedPlayerCount, connectedPlayerCount])
+
   const playRoundHandler = async() => {
     if(unsubmittedPlayerCount > 0) {
       setLog("You must wait until all players have submitted their tokens!");
       return;
     }
     try {
+      setRoundStarterState(buttonStates.LOADING);
       setIsRoundPlaying(true);
       await contract.methods.playRound().send({
           from: address,
         }, async function(error, hash) {
-          //console.log(error);
-          //console.log(result);
-          setLog("Calculating new token values...");
+          if(error) {
+            // alert("Something broke while trying to play the round. Check console for details.");
+            console.log(error);
+            router.reload(window.location.pathname);
+            return;
+          }
+          setLog("Playing round...");
           const interval = setInterval(function() {
             web3.eth.getTransactionReceipt(hash, function(err, rec) {
+              if(err) {
+                // alert("Something broke while waiting for the round to be played.");
+                console.log(error);
+                clearInterval(interval);
+                router.reload(window.location.pathname);
+              }
               if (rec) {
                 clearInterval(interval);
                 setLog("Round played!");
@@ -195,6 +244,7 @@ Admin panel
       alert("Playing the round failed. Check console for more details.");
       console.log(err);
     }
+    setRoundStarterState(buttonStates.DISABLED);
     setIsRoundPlaying(false);
   }
 
@@ -206,12 +256,15 @@ Admin panel
       await contract.methods.getCurrentRoundNumber().call({
         from: address,
       }, async function(error, _currentRoundNumber) {
-        if(error) console.log(error);
+        if(error) {
+          alert("Something went wrong trying to collect all past round data from the blockchain. Check console for details.")
+          console.log(error);
+        }
         currentRoundNumber = _currentRoundNumber;
       });
       let maxRoundNumber;
-      if(currentRoundNumber <= 1) {
-        alert("The graph has no data to display.");
+      if(currentRoundNumber <= 0) {
+        alert("The graph has no data to display. Play a round!");
         return [];
       }
       // -1 because we don't yet have data for the current round
@@ -226,66 +279,76 @@ Admin panel
           allRoundsData.push(roundData);
         });
       }
+      await contract.methods.getCurrentRoundData().call({
+        from: address,
+      }, async function(error, currentRoundData) {
+        if(error) console.log(error);
+        allRoundsData.push(currentRoundData);
+      })
+      setPlayerData(allRoundsData);
       playerTimelines = {};
       // playerTimelines: A dict where each key is a player id (wallet address) and each value is a finances object of {round, walletTokens, potTokens}.
       let roundIndex = 0;
       for(let roundData of allRoundsData) {
-        // console.log(`Round ${roundIndex} data: ${roundData}`);
         for(let player of roundData) {
-          // console.log(`Player: ${player}`);
-          let id = player[0];
-          let walletTokens = player[1];
-          let potTokens = player[2];
-          let finances = {"roundIndex": roundIndex, "walletTokens": walletTokens, "potTokens": potTokens};
-          if(id in playerTimelines) {
-            playerTimelines[id].push(finances);
+          let finances = {"roundIndex": roundIndex, "walletTokens": player.walletTokens, "potTokens": player.potTokens};
+          if(player.id in playerTimelines) {
+            playerTimelines[player.id].push(finances);
           } else {
-            playerTimelines[id] = [finances];
+            playerTimelines[player.id] = [finances];
           }
         }
         roundIndex++;
-      }
-      // console.log("Player timelines: ");
-      for(var key in playerTimelines) {
-        // console.log(key + ": ");
-        // console.log(playerTimelines[key]);
       }
     } catch(err) {
       alert("Something went wrong collecting game data. Check console for information.");
       console.log(err);
     }
-    // await downloadFile(allRoundsData);
-    // await downloadFile(playerTimelines);
     return playerTimelines;
   }
 
+  const getCSVData = (roundData) => {
+    let csvData = "";
+    csvData = "ID, Wallet Tokens, Pot Tokens";
+    for(let playerList of roundData) {
+      let walletTotal = 0;
+      let potTotal = 0;
+      for(let player of playerList) {
+        console.log(player);
+        csvData += `\n${player.id}, ${player.walletTokens}, ${player.potTokens}`;
+        walletTotal += parseInt(player.walletTokens);
+        potTotal += parseInt(player.potTokens);
+      }
+      csvData += `\nTotal, ${walletTotal}, ${potTotal}`;
+    }
+    console.log(csvData);
+    return csvData;
+  }
+
   const downloadFile = (data) => {
-    let savedData = JSON.stringify(data);
-    let bl = new Blob([savedData], {
+    let bl = new Blob([data], {
       type: "text/html"
     });
     let a = document.createElement("a");
     a.href = URL.createObjectURL(bl);
-    a.download = "savedData.json";
+    a.download = "savedData.csv";
     a.hidden = true;
     document.body.appendChild(a);
-    a.innerHTML =
-      "you shouldn't be able to read this :P";
     a.click();
   }
 
   const saveFile = async() => {
-    downloadFile({"rounds": chartLabels, "playerData": chartDatasets});
+    downloadFile(getCSVData(playerData));
   }
 
   // Graph stuff
-
   function randomColors(total) {
-    var i = 360 / (total - 1); // distribute the colors evenly on the hue range
+    var i = 360 / (total + 1); // distribute the colors evenly on the hue range
     var r = []; // hold the generated colors
-    for (var x=0; x<total; x++)
-    {
-        r.push(rgbToHex(...hsvToRgb(i * x, 100, 100))); // you can also alternate the saturation and value for even more contrast between the colors
+    for (var x = 0; x < total; x++) {
+      let hsv = hsvToRgb(i * x, 100, 100); // you can also alternate the saturation and value for even more contrast between the colors
+      let hex = rgbToHex(...hsv); 
+      r.push(hex);
     }
     return r;
   }
@@ -382,49 +445,69 @@ Admin panel
     setChartLabels(labels);
 
     // Three colors per player: total tokens, wallet tokens, pot tokens
+    // One more for the overall total
     const DATASETS_PER_PLAYER = 3;
-    let colors = randomColors(Object.keys(playerTimelines).length * DATASETS_PER_PLAYER);
+    const COLOR_COUNT = (Object.keys(playerTimelines).length * DATASETS_PER_PLAYER) + 1;
+    let colors = randomColors(COLOR_COUNT);
     
     let datasets = [];
     let playerCounter = 0;
     for(var key in playerTimelines) {
-      let totalTokensDataset = {};
-      let walletTokensDataset = {};
-      let potTokensDataset = {};
-      /*
-      datasets: [
-        {
-          label: "",
-          data: chartData,
-        },
-      ],
-      */
-      totalTokensDataset["label"] = `P${playerCounter + 1} Total Tokens`;
-      walletTokensDataset["label"] = `P${playerCounter + 1} Wallet`;
-      potTokensDataset["label"] = `P${playerCounter + 1} Pot`;
+      let totalTokensDataset = {
+        label: `P${playerCounter + 1} Total Tokens`,
+        data: [],
+        borderColor: colors[DATASETS_PER_PLAYER*playerCounter],
+        backgroundColor: colors[DATASETS_PER_PLAYER*playerCounter],
+      };
+      let walletTokensDataset = {
+        label: `P${playerCounter + 1} Wallet`,
+        data: [],
+        borderColor: colors[DATASETS_PER_PLAYER*playerCounter + 1],
+        backgroundColor: colors[DATASETS_PER_PLAYER*playerCounter + 1],
+      };
+      let potTokensDataset = {
+        label: `P${playerCounter + 1} Pot`,
+        data: [],
+        borderColor: colors[DATASETS_PER_PLAYER*playerCounter + 2],
+        backgroundColor: colors[DATASETS_PER_PLAYER*playerCounter + 2]
+      };
       let playerTimeline = playerTimelines[key];
-      let newTotalTokensData = [];
-      let newWalletData = [];
-      let newPotData = [];
-      for(let finances of playerTimeline) {         newTotalTokensData.push(parseInt(finances["walletTokens"]) + parseInt(finances["potTokens"]));
-        newWalletData.push(finances["walletTokens"]);
-        newPotData.push(finances["potTokens"]);
+      for(let finances of playerTimeline) {
+        let totalPlayerTokens = parseInt(finances.walletTokens) + parseInt(finances.potTokens);
+        totalTokensDataset.data.push(totalPlayerTokens);
+        walletTokensDataset.data.push(finances.walletTokens);
+        potTokensDataset.data.push(finances.potTokens);
       }
-      totalTokensDataset["data"] = newTotalTokensData;
-      walletTokensDataset["data"] = newWalletData;
-      potTokensDataset["data"] = newPotData;
-      totalTokensDataset["borderColor"] = colors[DATASETS_PER_PLAYER*playerCounter]
-      walletTokensDataset["borderColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 1];
-      potTokensDataset["borderColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 2];
-      totalTokensDataset["backgroundColor"] = colors[DATASETS_PER_PLAYER*playerCounter];
-      walletTokensDataset["backgroundColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 1];
-      potTokensDataset["backgroundColor"] = colors[DATASETS_PER_PLAYER*playerCounter + 2];
-      datasets.push(totalTokensDataset);
-      datasets.push(walletTokensDataset);
-      datasets.push(potTokensDataset);
-      console.log(`Added datasets for player ${playerCounter}: ${walletTokensDataset} ${potTokensDataset}`);
+      datasets.push(totalTokensDataset, walletTokensDataset, potTokensDataset);
       playerCounter++;
     }
+    let allPlayerTotalTokensDataset = {
+      label: "Combined Total Tokens",
+      data: [],
+      borderColor: colors[colors.length - 1],
+      backgroundColor: colors[colors.length - 1],
+    };
+    let tokenTotalsPerRound = {};
+    for(let playerDataset of datasets) {
+      let roundIndex = 0;
+      for(let roundTokenTotal of playerDataset.data) {
+        // TODO: Do this more intelligently (exclude non-total token datasets from the calculations)
+        if(playerDataset.label.includes("Total") == false) {
+          continue;
+        }
+        if(tokenTotalsPerRound[roundIndex] == undefined) {
+          tokenTotalsPerRound[roundIndex] = 0;
+        }
+        tokenTotalsPerRound[roundIndex] += parseInt(roundTokenTotal);
+        roundIndex++;
+      }
+    }
+    for(let round in tokenTotalsPerRound) {
+      allPlayerTotalTokensDataset.data.push(
+        tokenTotalsPerRound[round]
+      );
+    }
+    datasets.push(allPlayerTotalTokensDataset);
     setChartDatasets(datasets);
   }
 
@@ -439,12 +522,24 @@ Admin panel
       return;
     }
     try {
+      setMoneyResetterState(buttonStates.LOADING);
       await contract.methods.resetAllPlayerFinances().send({
         from: address,
       }, async function(error, hash) {
+        if(error) {
+          alert("Something broke while resetting player finances. Check console for details.")
+          console.log(error);
+          return;
+        }
         setLog("Resetting player finances...");
         const interval = setInterval(function() {
           web3.eth.getTransactionReceipt(hash, function(err, rec) {
+            if(err) {
+              // alert("Something broke while waiting for player finances to be reset.")
+              console.log(err);
+              clearInterval(interval);
+              router.reload(window.location.pathname);
+            }
             if (rec) {
               clearInterval(interval);
               setLog("All players token counts reset!");
@@ -458,6 +553,7 @@ Admin panel
       alert("Resetting player finances failed. Check console for details.")
       console.log(err);
     }
+    setMoneyResetterState(buttonStates.ENABLED);
   }
 
   const resetGame = async() => {
@@ -467,12 +563,25 @@ Admin panel
       return;
     }
     try {
+      setGameResetterState(buttonStates.LOADING);
       await contract.methods.completelyResetGame().send({
         from: address,
       }, async function(error, hash) {
+        if(error) {
+          // alert("Something broke while completely resetting the game. Check console for details.");
+          console.log(error);
+          router.reload(window.location.pathname);
+          return;
+        }
         setLog("Resetting the entire game...");
         const interval = setInterval(function() {
           web3.eth.getTransactionReceipt(hash, function(err, rec) {
+            if(err) {
+              // alert("Something broke while waiting for the game to be completely reset.");
+              console.log(err);
+              clearInterval(interval);
+              router.reload(window.location.pathname);
+            }
             if (rec) {
               clearInterval(interval);
               setLog("The game has been reset!");
@@ -486,51 +595,42 @@ Admin panel
       alert("Resetting the game failed. Check console for details.")
       console.log(err);
     }
+    setGameResetterState(buttonStates.ENABLED);
   }
   
   return (
     <div className = {styles.main}>
       <Head>
         <title>Public Good Game on the Blockchain Admin Page</title>
-        <meta name="description" content="The admin panel ge for a public good game on the blockchain"/>
+        <meta name="description" content="The admin panel ge for a public good game on the blockchain."/>
       </Head>
-      <nav className="navbar mt-4 mb-4">
-        <div className="container">
-          <div className="navbar-brand">
-            <h1>Public Good Game Admin Panel</h1>
-          </div>
-          <div className="navbar-end">
-          </div>
-        </div>
-      </nav>
-      <section id="connectButtonSection" className="has-text-centered" style={{display: (web3 === null ? "" : "none")}}>
+      <Navbar/>
+      <section id="connectButtonSection" className="has-text-centered" style={{display: (connectorState != buttonStates.ENABLED ? "none" : "")}}>
         <div id="connectButtonContainer">
-          <button id="connectWalletButton" onClick={connectWalletHandler} disabled={web3 === null ? false : true} className="button is-primary mb-2">{web3 === null ? "Connect Wallet" : "Connected"}</button>
+          <button id="connectWalletButton" onClick={connectWalletHandler} disabled={connectorState != buttonStates.ENABLED ? true : false} className="button is-primary mb-2">{web3 === null ? "Connect Wallet" : "Connected"}</button>
         </div>
       </section>
       <section id="game" className="has-text-centered" style={{display: (web3 === null ? "none" : "")}}>
-        <div id="info" className="">
-          <h2 id="log">{log}</h2>
-          <br></br>
-          <h2 id="roundNumber">Round {roundNumber}</h2>
+        <div id="info" className="is-size-5">
+          <p id="roundNumber" className="is-size-3">Round {roundNumber}</p>
           <p id="connectedPlayersCount">Players connected: {connectedPlayerCount}</p>
           <p id="unsubmittedPlayersCount">Players yet to submit: {unsubmittedPlayerCount}</p>
         </div>
-        <div id="playButtons" className="">
-          <button id="playRound" className="button mx-2" 
-            disabled={((unsubmittedPlayerCount == 0) && (connectedPlayerCount > 0) && (isRoundPlaying == false)) ? false : true} onClick={playRoundHandler}>Play Round</button>
-          <button id="saveData" className="button mx-2" disabled={(roundNumber > 1) ? false : true} onClick={saveFile}>Save Data</button>
+        <div id="playButtons">
+          <button id="playRound" className="button mx-2 my-2 is-primary" 
+            className={(roundStarterState == buttonStates.LOADING) ? "button is-primary mx-2 my-2 is-loading" : "button is-primary mx-2 my-2"} disabled={(roundStarterState != buttonStates.ENABLED) ? true : false} onClick={playRoundHandler}>Play Round</button>
+          <button id="saveData" className="button mx-2 my-2 is-primary" disabled={(roundNumber > 1) ? false : true} onClick={saveFile}>Save Data</button>
         </div>
-        <div id="data" className="" style={{padding: "0% 15% 0% 15%", height: "75%"}}>
-          { chartDatasets ? (
-            <Line
-              data={data}
-            />
-            ) : null}
+        <br/>
+        <p id="log" className="has-text-primary is-size-4">{log}</p>
+        <br/>
+        <div id="data" className="" style={{padding: "0% 25% 0% 25%", height: "75%"}}>
+          { chartDatasets ? (<Line data={data}/>) : null}
         </div>
-        <div id="resetButtons" className="">
-          <button id="resetPlayerFinances" className="button is-danger mx-2" onClick={resetPlayerFinances}>Reset Player Finances</button>
-          <button id="resetGame" className="button is-danger mx-2" onClick={resetGame}>Reset Game</button>
+        <br/>
+        <div id="resetButtons">
+          <button id="resetPlayerFinances" className={(moneyResetterState == buttonStates.LOADING) ? "button is-danger mx-2 is-loading" : "button is-danger mx-2"} disabled={(moneyResetterState != buttonStates.ENABLED) ? true : false} onClick={resetPlayerFinances}>Reset Player Finances</button>
+          <button id="resetGame" className={(gameResetterState == buttonStates.LOADING) ? "button is-danger mx-2 is-loading" : "button is-danger mx-2"} disabled={(gameResetterState != buttonStates.ENABLED) ? true : false} onClick={resetGame}>Reset Game</button>
         </div>
       </section>
     </div>
