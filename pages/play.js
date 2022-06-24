@@ -10,6 +10,20 @@ import Navbar from '../components/navbar.js'
 /*
 Most real TODO:
 
+Add 'introduction' page that the Play button on the home page takes you to where players have to accept terms or whatever and that redirects them to the play page
+
+Final results page? -> "Stop game" button on admin page/Built-in limit of 10 rounds? -> "isStopped" field in contract?
+-> This would contain final results (obviously) 
+-> Final token count, payout in Euro units (will need the token to euro conversion factor)
+-The overall amount of tokens contributed to the public good was: AMOUNT
+Maybe add a functionality to the smart contract where if the total pot contributions over all rounds reaches a certain point, players will receive an additional token payout (as they have successfully created the 'public good')
+
+"Thank you for participating!"
+
+and a button linking to a post-game survey (yellow button?)
+"Click here for some final questions and to end the experiment."
+
+
 Remember that when playing on new computers, we will need to give all of them ETH.
 
 */

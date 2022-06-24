@@ -7,7 +7,9 @@ import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
 import Navbar from '../components/navbar.js'
 import { Chart as ChartJS } from 'chart.js/auto'
+/*
 import { Chart } from 'react-chartjs-2'
+*/
 import {Line} from 'react-chartjs-2';
 
 const AdminPage = () => {
@@ -602,7 +604,7 @@ Admin panel
     <div className = {styles.main}>
       <Head>
         <title>Public Good Game on the Blockchain Admin Page</title>
-        <meta name="description" content="The admin panel ge for a public good game on the blockchain."/>
+        <meta name="description" content="The admin panel for a public good game on the blockchain."/>
       </Head>
       <Navbar/>
       <section id="connectButtonSection" className="has-text-centered" style={{display: (connectorState != buttonStates.ENABLED ? "none" : "")}}>

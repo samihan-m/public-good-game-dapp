@@ -10,11 +10,11 @@ const HomePage = () => {
     <div className = {styles.main}>
       <Head>
         <title>BTU Public Good Game on the Blockchain</title>
-        <meta name="description" content="The admin panel ge for a public good game on the blockchain"/>
+        <meta name="description" content="The home page for a public good game on the blockchain"/>
       </Head>
       <Navbar/>
       <div id="buttons" className="has-text-centered">
-        <a className="button is-primary is-size-3 my-4" href="/play">Play the game!</a>
+        <a className="button is-primary is-size-3 my-4" href="/terms">Play the game!</a>
         <br/>
         <a className="button is-primary is-size-3 my-4" href="/admin">Administrate the game!</a>
       </div>
