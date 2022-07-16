@@ -68,6 +68,8 @@ Admin panel
   const [address, setAddress] = useState(null);
   const [contract, setContract] = useState(null);
 
+  const [isGameRunning, setIsGameRunning] = useState(true);
+
   // Used for sleeping during ping loops
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
