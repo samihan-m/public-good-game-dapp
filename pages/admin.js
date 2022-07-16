@@ -8,7 +8,7 @@ import styles from '../styles/Game.module.css'
 import Navbar from '../components/navbar.js'
 // I believe this import is required despite it not appearing to be the case
 import { Chart as ChartJS } from 'chart.js/auto'
-import getRandomColors from '../utils/randomColors'
+import getRandomColors from '../utils/utils'
 import {Line} from 'react-chartjs-2';
 
 const AdminPage = () => {
