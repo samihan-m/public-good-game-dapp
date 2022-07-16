@@ -6,10 +6,9 @@ import gameContract from '../blockchain/game'
 import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
 import Navbar from '../components/navbar.js'
+// I believe this import is required despite it not appearing to be the case
 import { Chart as ChartJS } from 'chart.js/auto'
-/*
-import { Chart } from 'react-chartjs-2'
-*/
+import getRandomColors from '../utils/randomColors'
 import {Line} from 'react-chartjs-2';
 
 const AdminPage = () => {
@@ -68,14 +67,10 @@ Admin panel
   const [connectedPlayerCount, setCPC] = useState(-1);
   const [unsubmittedPlayerCount, setUPC] = useState(-1);
   const [roundNumber, setRoundNumber] = useState(-1);
-  const [isRoundPlaying, setIsRoundPlaying] = useState(false);
 
   const [web3, setWeb3] = useState(null);
   const [address, setAddress] = useState(null);
   const [contract, setContract] = useState(null);
-
-  // TODO Eventually maybe use this to turn the blockchain ping loop off if there's some inactivity or something
-  const [isGameRunning, setIsGameRunning] = useState(true);
 
   // Used for sleeping during ping loops
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -213,7 +208,6 @@ Admin panel
     }
     try {
       setRoundStarterState(buttonStates.LOADING);
-      setIsRoundPlaying(true);
       await contract.methods.playRound().send({
           from: address,
         }, async function(error, hash) {
@@ -247,7 +241,6 @@ Admin panel
       console.log(err);
     }
     setRoundStarterState(buttonStates.DISABLED);
-    setIsRoundPlaying(false);
   }
 
   const collectGameData = async() => {
@@ -343,92 +336,6 @@ Admin panel
     downloadFile(getCSVData(playerData));
   }
 
-  // Graph stuff
-  function randomColors(total) {
-    var i = 360 / (total + 1); // distribute the colors evenly on the hue range
-    var r = []; // hold the generated colors
-    for (var x = 0; x < total; x++) {
-      let hsv = hsvToRgb(i * x, 100, 100); // you can also alternate the saturation and value for even more contrast between the colors
-      let hex = rgbToHex(...hsv); 
-      r.push(hex);
-    }
-    return r;
-  }
-
-  const rgbToHex = (r, g, b) => {
-    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
-  }
-
-  var hsvToRgb = function(h, s, v) {
-    var r, g, b;
-    var i;
-    var f, p, q, t;
-  
-    // Make sure our arguments stay in-range
-    h = Math.max(0, Math.min(360, h));
-    s = Math.max(0, Math.min(100, s));
-    v = Math.max(0, Math.min(100, v));
-  
-    // We accept saturation and value arguments from 0 to 100 because that's
-    // how Photoshop represents those values. Internally, however, the
-    // saturation and value are calculated from a range of 0 to 1. We make
-    // That conversion here.
-    s /= 100;
-    v /= 100;
-  
-    if (s == 0) {
-      // Achromatic (grey)
-      r = g = b = v;
-      return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-    }
-  
-    h /= 60; // sector 0 to 5
-    i = Math.floor(h);
-    f = h - i; // factorial part of h
-    p = v * (1 - s);
-    q = v * (1 - s * f);
-    t = v * (1 - s * (1 - f));
-  
-    switch (i) {
-      case 0:
-        r = v;
-        g = t;
-        b = p;
-        break;
-  
-      case 1:
-        r = q;
-        g = v;
-        b = p;
-        break;
-  
-      case 2:
-        r = p;
-        g = v;
-        b = t;
-        break;
-  
-      case 3:
-        r = p;
-        g = q;
-        b = v;
-        break;
-  
-      case 4:
-        r = t;
-        g = p;
-        b = v;
-        break;
-  
-      default: // case 5:
-        r = v;
-        g = p;
-        b = q;
-    }
-  
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-  };
-
   const createGraph = async () => {
     let playerTimelines = await collectGameData();
     if(playerTimelines.size == 0) {
@@ -450,7 +357,7 @@ Admin panel
     // One more for the overall total
     const DATASETS_PER_PLAYER = 3;
     const COLOR_COUNT = (Object.keys(playerTimelines).length * DATASETS_PER_PLAYER) + 1;
-    let colors = randomColors(COLOR_COUNT);
+    let colors = getRandomColors(COLOR_COUNT);
     
     let datasets = [];
     let playerCounter = 0;
@@ -619,9 +526,19 @@ Admin panel
           <p id="unsubmittedPlayersCount">Players yet to submit: {unsubmittedPlayerCount}</p>
         </div>
         <div id="playButtons">
-          <button id="playRound" className="button mx-2 my-2 is-primary" 
-            className={(roundStarterState == buttonStates.LOADING) ? "button is-primary mx-2 my-2 is-loading" : "button is-primary mx-2 my-2"} disabled={(roundStarterState != buttonStates.ENABLED) ? true : false} onClick={playRoundHandler}>Play Round</button>
-          <button id="saveData" className="button mx-2 my-2 is-primary" disabled={(roundNumber > 1) ? false : true} onClick={saveFile}>Save Data</button>
+          <button id="playRound"
+            className={(roundStarterState == buttonStates.LOADING) ? "button is-primary mx-2 my-2 is-loading" : "button is-primary mx-2 my-2"} 
+            disabled={(roundStarterState != buttonStates.ENABLED) ? true : false} onClick={playRoundHandler}
+          >
+            Play Round
+          </button>
+          <button id="saveData" 
+          className="button mx-2 my-2 is-primary" 
+          disabled={(roundNumber > 1) ? false : true} 
+          onClick={saveFile}
+          >
+            Save Data
+          </button>
         </div>
         <br/>
         <p id="log" className="has-text-primary is-size-4">{log}</p>
@@ -631,12 +548,22 @@ Admin panel
         </div>
         <br/>
         <div id="resetButtons">
-          <button id="resetPlayerFinances" className={(moneyResetterState == buttonStates.LOADING) ? "button is-danger mx-2 is-loading" : "button is-danger mx-2"} disabled={(moneyResetterState != buttonStates.ENABLED) ? true : false} onClick={resetPlayerFinances}>Reset Player Finances</button>
-          <button id="resetGame" className={(gameResetterState == buttonStates.LOADING) ? "button is-danger mx-2 is-loading" : "button is-danger mx-2"} disabled={(gameResetterState != buttonStates.ENABLED) ? true : false} onClick={resetGame}>Reset Game</button>
+          <button id="resetPlayerFinances" 
+            className={(moneyResetterState == buttonStates.LOADING) ? "button is-danger mx-2 is-loading" : "button is-danger mx-2"} 
+            disabled={(moneyResetterState != buttonStates.ENABLED) ? true : false} onClick={resetPlayerFinances}
+          >
+            Reset Player Finances
+          </button>
+          <button id="resetGame" 
+            className={(gameResetterState == buttonStates.LOADING) ? "button is-danger mx-2 is-loading" : "button is-danger mx-2"} 
+            disabled={(gameResetterState != buttonStates.ENABLED) ? true : false} onClick={resetGame}
+          >
+            Reset Game
+          </button>
         </div>
       </section>
     </div>
   )
 }
 
-export default AdminPage
+export default AdminPage;

@@ -123,9 +123,6 @@ const Game = () => {
   const [web3, setWeb3] = useState(null);
   const [address, setAddress] = useState(null);
   const [contract, setContract] = useState(null);
-  
-  // For disabling contract read loop
-  const [isGameRunning, setIsGameRunning] = useState(true);
 
   // Used for sleeping during ping loops
   const sleep = ms => new Promise(r => setTimeout(r, ms));

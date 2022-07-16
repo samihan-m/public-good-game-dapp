@@ -1,5 +1,4 @@
 import Head from 'next/head'
-import { useState, useEffect } from 'react'
 import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
 import Navbar from '../components/navbar.js'
@@ -16,9 +15,9 @@ const TermsPage = () => {
         <p>Read these terms before continuing on to the game:</p>
         <br/>
         <ul>
-          <li>Term 1</li>
-          <li>Term 2</li>
-          <li>Term 3</li>
+          <li>Term 1 (TBD)</li>
+          <li>Term 2 (TBD)</li>
+          <li>Term 3 (TBD)</li>
         </ul>
         <br/>
         <a href="/play" className="button is-primary">I accept</a>

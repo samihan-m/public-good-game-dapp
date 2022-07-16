@@ -1,6 +1,4 @@
 import Head from 'next/head'
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/router'
 import 'bulma/css/bulma.css'
 import styles from '../styles/Game.module.css'
 import Navbar from '../components/navbar.js'
