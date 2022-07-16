@@ -1,5 +1,5 @@
 // Graph stuff
-function getRandomColors(total) {
+export default function getRandomColors(total) {
     var i = 360 / (total + 1); // distribute the colors evenly on the hue range
     var r = []; // hold the generated colors
     for (var x = 0; x < total; x++) {
