@@ -1,5 +1,7 @@
 A web app through which you can administer and play public good game research experiments on the blockchain.
 
+The repo for the smart contract is [here](https://github.com/samihan-m/public-good-game-smart-contract).
+
 The rest of the original, auto-generated `README` is below.
 
 This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
